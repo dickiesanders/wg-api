@@ -1,7 +1,7 @@
 {
     "listen": {
-        "port": 3000,
-        "host": "0.0.0.0"
+        "port": 500,
+        "host": "172.16.4.1"
     },
     "allowedHosts": ["*"],
     "wg": {

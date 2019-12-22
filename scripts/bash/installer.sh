@@ -65,7 +65,8 @@ if [ ! -f "$WG_CONFIG" ]; then
         echo "   1) Cloudflare"
         echo "   2) Google"
         echo "   3) OpenDNS"
-        read -p "DNS [1-3]: " -e -i 1 DNS_CHOICE
+        echo "   4) Unbound (Local DNS)"
+        read -p "DNS [1-4]: " -e -i 1 DNS_CHOICE
 
         case $DNS_CHOICE in
             1)
@@ -77,6 +78,10 @@ if [ ! -f "$WG_CONFIG" ]; then
             3)
             CLIENT_DNS="208.67.222.222,208.67.220.220"
             ;;
+            4)
+            CLIENT_DNS="$GATEWAY_ADDRESS"
+            DNS="unbound"
+            ;;
         esac
     fi
 
@@ -85,20 +90,20 @@ if [ ! -f "$WG_CONFIG" ]; then
     fi
 
     if [ "$DISTRO" == "Ubuntu" ]; then
-	apt-get install software-properties-common -y
-	add-apt-repository ppa:wireguard/wireguard -y
-	apt update
-	apt install linux-headers-$(uname -r) wireguard qrencode iptables-persistent -y
+        apt-get install software-properties-common -y
+        add-apt-repository ppa:wireguard/wireguard -y
+        apt update
+        apt install linux-headers-$(uname -r) wireguard qrencode iptables-persistent miniupnpc ${DNS:} -y
     elif [ "$DISTRO" == "Debian" ]; then
         echo "deb http://deb.debian.org/debian/ unstable main" > /etc/apt/sources.list.d/unstable.list
         printf 'Package: *\nPin: release a=unstable\nPin-Priority: 90\n' > /etc/apt/preferences.d/limit-unstable
 		apt-get install software-properties-common -y
 		apt update
-		apt install linux-headers-$(uname -r) wireguard qrencode iptables-persistent -y
+		apt install linux-headers-$(uname -r) wireguard qrencode iptables-persistent miniupnpc ${DNS:} -y
     elif [ "$DISTRO" == "CentOS" ]; then
         curl -Lo /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-7/jdoss-wireguard-epel-7.repo
         yum install epel-release -y
-        yum install wireguard-dkms qrencode wireguard-tools firewalld -y
+        yum install wireguard-dkms qrencode wireguard-tools firewalld miniupnpc ${DNS:} -y
     fi
 
     SERVER_PRIVKEY=$( wg genkey )
@@ -151,12 +156,27 @@ qrencode -t ansiutf8 -l L < $HOME/$CLIENT_NAME-wg0.conf
         iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
         iptables -A FORWARD -m conntrack --ctstate NEW -s $PRIVATE_SUBNET -m policy --pol none --dir in -j ACCEPT
         iptables -t nat -A POSTROUTING -s $PRIVATE_SUBNET -m policy --pol none --dir out -j MASQUERADE
-        iptables -A INPUT -p udp --dport $SERVER_PORT -j ACCEPT
+        #iptables -A INPUT -p udp --dport $SERVER_PORT -j ACCEPT
+        iptables -A INPUT -p udp -m udp --dport $SERVER_PORT -m conntrack --ctstate NEW -j ACCEPT
+        if [ "$DNS" == "unbound" ]; then
+        iptables -A INPUT -s $PRIVATE_SUBNET/$PRIVATE_SUBNET_MASK -p tcp -m tcp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+        iptables -A INPUT -s $PRIVATE_SUBNET/$PRIVATE_SUBNET_MASK -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+        fi
         iptables-save > /etc/iptables/rules.v4
     fi
 
+    if [ "$DNS" == "unbound" ]; then
+        curl -o /var/lib/unbound/root.hints https://www.internic.net/domain/named.cache
+        chown -R unbound:unbound /var/lib/unbound
+        cp ../data/unbound.conf.tpl /etc/unbound/unbound.conf.d/unbound_srv.conf
+        sed -i "s/PRIVATE_SUBNET\/PRIVATE_SUBNET_MASK/$PRIVATE_SUBNET\/$PRIVATE_SUBNET_MASK/g" /etc/unbound/unbound.conf.d/unbound_srv.conf
+        systemctl enable unbound
+        systemctl restart unbound
+    fi
     systemctl enable wg-quick@wg0.service
     systemctl start wg-quick@wg0.service
+
+    upnpc -a `hostname -I | cut -d " " -f 1` $SERVER_PORT $SERVER_PORT TCP  
 
     # TODO: unattended updates, apt install dnsmasq ntp
     echo "Client config --> $HOME/$CLIENT_NAME-wg0.conf"
