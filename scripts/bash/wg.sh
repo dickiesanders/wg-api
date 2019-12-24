@@ -164,12 +164,14 @@ init_server() {
 
     if [[ -s $WG_CONF_FILE ]]; then
         echo "$WG_CONF_FILE exist"
-	exit 1
+        generate_cidr_ip_file_if
+        wg-quick up $interface
+    else
+        generate_cidr_ip_file_if
+        eval "echo \"$(cat "${template_file}")\"" > $WG_CONF_FILE
+        chmod 600 $WG_CONF_FILE
+        wg-quick up $interface
     fi
-    generate_cidr_ip_file_if
-    eval "echo \"$(cat "${template_file}")\"" > $WG_CONF_FILE
-    chmod 600 $WG_CONF_FILE
-    wg-quick up $interface
 }
 
 list_user() {

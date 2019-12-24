@@ -163,8 +163,8 @@ if [ ! -f "$WG_CONFIG" ]; then
     fi
     systemctl enable wg-quick@wg0.service
     systemctl start wg-quick@wg0.service
-    wg-quick up wg0
-    sleep 10
+    #wg-quick up wg0
+    #sleep 10
 
     upnpc -a `hostname -I | cut -d " " -f 1` $SERVER_PORT $SERVER_PORT UDP 
 
@@ -193,7 +193,7 @@ if [ ! -f "$WG_CONFIG" ]; then
     # TODO: unattended updates, apt install dnsmasq ntp
     echo "Client config --> $HOME/$CLIENT_NAME-wg0.conf"
     echo "Now reboot the server and enjoy your fresh VPN installation! :^)"
-    wg-quick down wg0 && wg-quick up wg0
+    #wg-quick down wg0 && wg-quick up wg0
 else
     ### Server is installed, add a new client
     CLIENT_NAME="$1"
@@ -229,5 +229,5 @@ else
 
     ip address | grep -q wg0 && wg set wg0 peer "$CLIENT_PUBKEY" allowed-ips "$CLIENT_ADDRESS/32"
     echo "Client added, new configuration file --> $HOME/$CLIENT_NAME-wg0.conf"
-    wg-quick down wg0 && wg-quick up wg0
+    #wg-quick down wg0 && wg-quick up wg0
 fi
