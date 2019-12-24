@@ -33,17 +33,19 @@ generate_cidr_ip_file_if() {
     local end=$(( beg+(1<<(32-mask))-1 ))
     ip=$(dec2ip $((beg+1)))
     _SERVER_IP="$ip/$mask"
-    if [[ -f $AVAILABLE_IP_FILE ]]; then
-        return
-    fi
+    #if [[ -f $AVAILABLE_IP_FILE ]]; then
+    #    return
+    #fi
 
-    > $AVAILABLE_IP_FILE
+    #> $AVAILABLE_IP_FILE
     local i=$((beg+2))
     while [[ $i -lt $end ]]; do
         ip=$(dec2ip $i)
 	echo "$ip/$mask" >> $AVAILABLE_IP_FILE
         i=$((i+1))
     done
+
+    sed -ir '/^\s*$/d' $AVAILABLE_IP_FILE
 }
 
 get_vpn_ip() {
@@ -62,6 +64,7 @@ add_user() {
     local userdir="../../profiles/$user"
 
     mkdir -p "$userdir"
+    touch $userdir/wg0.conf
     wg genkey | tee $userdir/privatekey | wg pubkey > $userdir/publickey
 
     # client config file
@@ -76,7 +79,7 @@ add_user() {
 	_TABLE=off
     fi
     eval "echo \"$(cat "${template_file}")\"" > $userdir/wg0.conf
-    qrencode -o $userdir/$user.png  < $userdir/wg0.conf
+    qrencode -t ansiutf8 -o $userdir/$user.png < $userdir/wg0.conf
 
     # change wg config
     local ip=${_VPN_IP%/*}/32
@@ -164,12 +167,16 @@ init_server() {
 
     if [[ -s $WG_CONF_FILE ]]; then
         echo "$WG_CONF_FILE exist"
-	exit 1
+	generate_cidr_ip_file_if
+	wg-quick up $interface
+	systemctl restart unbound
+    else
+        generate_cidr_ip_file_if
+        eval "echo \"$(cat "${template_file}")\"" > $WG_CONF_FILE
+        chmod 600 $WG_CONF_FILE
+        wg-quick up $interface
+	systemctl restart unbound
     fi
-    generate_cidr_ip_file_if
-    eval "echo \"$(cat "${template_file}")\"" > $WG_CONF_FILE
-    chmod 600 $WG_CONF_FILE
-    wg-quick up $interface
 }
 
 list_user() {

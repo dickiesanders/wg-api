@@ -1,6 +1,9 @@
 const config = require('./config.json')
 var fs = require('fs')
 var ini = require('ini')
+var qr = require('qr-encode')
+const qrcode = require('qrcode')
+const svgToImg = require("svg-to-img")
 const chalk = require('chalk')
 const path = require('path')
 const exec = require('child_process').exec
@@ -126,7 +129,20 @@ fastify.get('/peer/qr/:username', function(request, reply) {
     cliMsg(`${request.ip} requested QR .png of peer ${request.params.username}`)
     if (!authAction(request)) return
     try {
-        reply.sendFile(path.join("profiles", request.params.username, request.params.username + ".png"))
+	//reply.sendFile(path.join("profiles", request.params.username, request.params.username + ".png"))
+	const data = fs.readFileSync( path.join("profiles", request.params.username, "wg0.conf"), 'UTF-8')
+		qrcode.toDataURL(data, function (err, url) {
+		    //console.log(url)
+		    var data = url.replace(/^data:image\/\w+;base64,/, '')
+			console.log(data)
+		    var fileName = path.join("profiles", request.params.username, request.params.username + ".png")
+	            fs.writeFile(fileName, data, {encoding: 'base64'}, function(err) {
+    		    //fs.writeFile(path.join("profiles", request.params.username, request.params.username + ".png"), url, function(err) {
+  		        console.log(err)
+		    //})    	
+	    	    })
+		})
+	reply.sendFile(path.join("profiles", request.params.username, request.params.username + ".png"))
     } catch (error) {
         reply.send(JSON.stringify({ code: 404, error: "Profile not found." }, null, 2))
     }

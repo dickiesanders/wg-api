@@ -41,12 +41,14 @@ fi
 if [ ! -f "$WG_CONFIG" ]; then
     ### Install server and add default client
     INTERACTIVE=${INTERACTIVE:-yes}
-    PRIVATE_SUBNET=${PRIVATE_SUBNET:-"10.9.0.0/24"}
+    PRIVATE_SUBNET=${PRIVATE_SUBNET:-"172.16.4.0/24"}
     PRIVATE_SUBNET_MASK=$( echo $PRIVATE_SUBNET | cut -d "/" -f 2 )
     GATEWAY_ADDRESS="${PRIVATE_SUBNET::-4}1"
 
     if [ "$SERVER_HOST" == "" ]; then
-        SERVER_HOST=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+        # Returns host LAN IP and not public IP address...
+        #SERVER_HOST=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+        SERVER_HOST=$(curl -s ifconfig.me)
         if [ "$INTERACTIVE" == "yes" ]; then
             read -p "Servers public IP address is $SERVER_HOST. Is that correct? [y/n]: " -e -i "y" CONFIRM
             if [ "$CONFIRM" == "n" ]; then
@@ -57,7 +59,13 @@ if [ ! -f "$WG_CONFIG" ]; then
     fi
 
     if [ "$SERVER_PORT" == "" ]; then
-        SERVER_PORT=$( get_free_udp_port )
+        read -p "Do you want to set the server port? [y/n]: " -e -i "y" CONFIRM
+        if [ "$CONFIRM" == "y" ]; then
+            read -p "Enter port number:" SERVER_PORT
+        elif [ "$CONFIRM" == "n" ]; then
+            echo "Picking random server port!"
+            SERVER_PORT=$( get_free_udp_port )
+        fi
     fi
 
     if [ "$CLIENT_DNS" == "" ]; then
@@ -79,8 +87,7 @@ if [ ! -f "$WG_CONFIG" ]; then
             CLIENT_DNS="208.67.222.222,208.67.220.220"
             ;;
             4)
-            CLIENT_DNS="$GATEWAY_ADDRESS"
-            DNS="unbound"
+            CLIENT_DNS="$GATEWAY_ADDRESS"; DNSENTRY="unbound"
             ;;
         esac
     fi
@@ -93,17 +100,21 @@ if [ ! -f "$WG_CONFIG" ]; then
         apt-get install software-properties-common -y
         add-apt-repository ppa:wireguard/wireguard -y
         apt update
-        apt install linux-headers-$(uname -r) wireguard qrencode iptables-persistent miniupnpc ${DNS:} -y
+        echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
+        echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
+        apt -y install linux-headers-$(uname -r) wireguard qrencode iptables-persistent miniupnpc $DNSENTRY
     elif [ "$DISTRO" == "Debian" ]; then
         echo "deb http://deb.debian.org/debian/ unstable main" > /etc/apt/sources.list.d/unstable.list
         printf 'Package: *\nPin: release a=unstable\nPin-Priority: 90\n' > /etc/apt/preferences.d/limit-unstable
-		apt-get install software-properties-common -y
-		apt update
-		apt install linux-headers-$(uname -r) wireguard qrencode iptables-persistent miniupnpc ${DNS:} -y
+        apt-get install software-properties-common -y
+        apt update
+        echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
+        echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
+        apt -y install linux-headers-$(uname -r) wireguard qrencode iptables-persistent miniupnpc $DNSENTRY
     elif [ "$DISTRO" == "CentOS" ]; then
         curl -Lo /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-7/jdoss-wireguard-epel-7.repo
         yum install epel-release -y
-        yum install wireguard-dkms qrencode wireguard-tools firewalld miniupnpc ${DNS:} -y
+        yum -y install wireguard-dkms qrencode wireguard-tools firewalld miniupnpc $DNSENTRY
     fi
 
     SERVER_PRIVKEY=$( wg genkey )
@@ -116,34 +127,48 @@ if [ ! -f "$WG_CONFIG" ]; then
     touch $WG_CONFIG && chmod 600 $WG_CONFIG
 
     echo "# $PRIVATE_SUBNET $SERVER_HOST:$SERVER_PORT $SERVER_PUBKEY $CLIENT_DNS
-[Interface]
-Address = $GATEWAY_ADDRESS/$PRIVATE_SUBNET_MASK
-ListenPort = $SERVER_PORT
-PrivateKey = $SERVER_PRIVKEY
-SaveConfig = false" > $WG_CONFIG
+    [Interface]
+    Address = $GATEWAY_ADDRESS/$PRIVATE_SUBNET_MASK
+    ListenPort = $SERVER_PORT
+    PrivateKey = $SERVER_PRIVKEY
+    SaveConfig = false" | sed 's/^ *//' > $WG_CONFIG
 
     echo "# $CLIENT_NAME
-[Peer]
-PublicKey = $CLIENT_PUBKEY
-AllowedIPs = $CLIENT_ADDRESS/32" >> $WG_CONFIG
+    [Peer] 
+    PublicKey = $CLIENT_PUBKEY
+    AllowedIPs = $CLIENT_ADDRESS/32" | sed 's/^ *//' >> $WG_CONFIG
 
     echo "[Interface]
-PrivateKey = $CLIENT_PRIVKEY
-Address = $CLIENT_ADDRESS/$PRIVATE_SUBNET_MASK
-DNS = $CLIENT_DNS
-[Peer]
-PublicKey = $SERVER_PUBKEY
-AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = $SERVER_HOST:$SERVER_PORT
-PersistentKeepalive = 25" > $HOME/$CLIENT_NAME-wg0.conf
-qrencode -t ansiutf8 -l L < $HOME/$CLIENT_NAME-wg0.conf
+    PrivateKey = $CLIENT_PRIVKEY
+    Address = $CLIENT_ADDRESS/$PRIVATE_SUBNET_MASK
+    DNS = $CLIENT_DNS
+    [Peer]
+    PublicKey = $SERVER_PUBKEY
+    AllowedIPs = 0.0.0.0/0, ::/0
+    Endpoint = $SERVER_HOST:$SERVER_PORT
+    PersistentKeepalive = 25" | sed 's/^ *//' > $HOME/$CLIENT_NAME-wg0.conf
+    qrencode -t ansiutf8 -l L < $HOME/$CLIENT_NAME-wg0.conf
 
-    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
-    echo "net.ipv4.conf.all.forwarding=1" >> /etc/sysctl.conf
-    echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+    sed -ie 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/; s/#net.ipv4.conf.all.forwarding=1/net.ipv4.conf.all.forwarding=1/; s/#net.ipv6.conf.all.forwarding=1/net.ipv6.conf.all.forwarding=1/' /etc/sysctl.conf
     sysctl -p
 
-    if [ "$DISTRO" == "CentOS" ]; then
+    if [ "$DNSENTRY" == "unbound" ]; then
+        curl -so /var/lib/unbound/root.hints https://www.internic.net/domain/named.cache
+        chown -R unbound:unbound /var/lib/unbound
+        cp /root/wg-api/scripts/data/unbound.conf.tpl /etc/unbound/unbound.conf.d/unbound_srv.conf
+        sed -ie "s/0.0.0.0/$GATEWAY_ADDRESS/" /etc/unbound/unbound.conf.d/unbound_srv.conf
+        sed -ie "s|PRIVATE_SUBNET\/PRIVATE_SUBNET_MASK|$PRIVATE_SUBNET|g" /etc/unbound/unbound.conf.d/unbound_srv.conf
+        systemctl enable unbound
+        systemctl restart unbound
+    fi
+    systemctl enable wg-quick@wg0.service
+    systemctl start wg-quick@wg0.service
+    #wg-quick up wg0
+    #sleep 10
+
+    upnpc -a `hostname -I | cut -d " " -f 1` $SERVER_PORT $SERVER_PORT UDP 
+
+   if [ "$DISTRO" == "CentOS" ]; then
         systemctl start firewalld
         systemctl enable firewalld
         firewall-cmd --zone=public --add-port=$SERVER_PORT/udp
@@ -158,29 +183,17 @@ qrencode -t ansiutf8 -l L < $HOME/$CLIENT_NAME-wg0.conf
         iptables -t nat -A POSTROUTING -s $PRIVATE_SUBNET -m policy --pol none --dir out -j MASQUERADE
         #iptables -A INPUT -p udp --dport $SERVER_PORT -j ACCEPT
         iptables -A INPUT -p udp -m udp --dport $SERVER_PORT -m conntrack --ctstate NEW -j ACCEPT
-        if [ "$DNS" == "unbound" ]; then
-        iptables -A INPUT -s $PRIVATE_SUBNET/$PRIVATE_SUBNET_MASK -p tcp -m tcp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
-        iptables -A INPUT -s $PRIVATE_SUBNET/$PRIVATE_SUBNET_MASK -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+        if [ "$DNSENTRY" == "unbound" ]; then
+            iptables -A INPUT -s $PRIVATE_SUBNET -p tcp -m tcp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+            iptables -A INPUT -s $PRIVATE_SUBNET -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
         fi
         iptables-save > /etc/iptables/rules.v4
     fi
 
-    if [ "$DNS" == "unbound" ]; then
-        curl -o /var/lib/unbound/root.hints https://www.internic.net/domain/named.cache
-        chown -R unbound:unbound /var/lib/unbound
-        cp ../data/unbound.conf.tpl /etc/unbound/unbound.conf.d/unbound_srv.conf
-        sed -i "s/PRIVATE_SUBNET\/PRIVATE_SUBNET_MASK/$PRIVATE_SUBNET\/$PRIVATE_SUBNET_MASK/g" /etc/unbound/unbound.conf.d/unbound_srv.conf
-        systemctl enable unbound
-        systemctl restart unbound
-    fi
-    systemctl enable wg-quick@wg0.service
-    systemctl start wg-quick@wg0.service
-
-    upnpc -a `hostname -I | cut -d " " -f 1` $SERVER_PORT $SERVER_PORT TCP  
-
     # TODO: unattended updates, apt install dnsmasq ntp
     echo "Client config --> $HOME/$CLIENT_NAME-wg0.conf"
     echo "Now reboot the server and enjoy your fresh VPN installation! :^)"
+    #wg-quick down wg0 && wg-quick up wg0
 else
     ### Server is installed, add a new client
     CLIENT_NAME="$1"
@@ -197,22 +210,25 @@ else
     CLIENT_DNS=$( head -n1 $WG_CONFIG | awk '{print $5}')
     LASTIP=$( grep "/32" $WG_CONFIG | tail -n1 | awk '{print $3}' | cut -d "/" -f 1 | cut -d "." -f 4 )
     CLIENT_ADDRESS="${PRIVATE_SUBNET::-4}$((LASTIP+1))"
+
     echo "# $CLIENT_NAME
-[Peer]
-PublicKey = $CLIENT_PUBKEY
-AllowedIPs = $CLIENT_ADDRESS/32" >> $WG_CONFIG
+    [Peer]
+    PublicKey = $CLIENT_PUBKEY
+    AllowedIPs = $CLIENT_ADDRESS/32" | sed 's/^ *//' >> $WG_CONFIG
 
     echo "[Interface]
-PrivateKey = $CLIENT_PRIVKEY
-Address = $CLIENT_ADDRESS/$PRIVATE_SUBNET_MASK
-DNS = $CLIENT_DNS
-[Peer]
-PublicKey = $SERVER_PUBKEY
-AllowedIPs = 0.0.0.0/0, ::/0 
-Endpoint = $SERVER_ENDPOINT
-PersistentKeepalive = 25" > $HOME/$CLIENT_NAME-wg0.conf
-qrencode -t ansiutf8 -l L < $HOME/$CLIENT_NAME-wg0.conf
+    PrivateKey = $CLIENT_PRIVKEY
+    Address = $CLIENT_ADDRESS/$PRIVATE_SUBNET_MASK
+    DNS = $CLIENT_DNS
+    [Peer]
+    PublicKey = $SERVER_PUBKEY
+    AllowedIPs = 0.0.0.0/0, ::/0 
+    Endpoint = $SERVER_ENDPOINT
+    PersistentKeepalive = 25" | sed 's/^ *//' > $HOME/$CLIENT_NAME-wg0.conf
+    qrencode -t ansiutf8 -l L < $HOME/$CLIENT_NAME-wg0.conf
 
     ip address | grep -q wg0 && wg set wg0 peer "$CLIENT_PUBKEY" allowed-ips "$CLIENT_ADDRESS/32"
     echo "Client added, new configuration file --> $HOME/$CLIENT_NAME-wg0.conf"
+    #wg-quick down wg0 && wg-quick up wg0
 fi
+

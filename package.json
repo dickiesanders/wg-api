@@ -10,6 +10,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "fastify-static": "^2.5.0"
+    "fastify-static": "^2.5.0",
+    "qr-encode": "^0.3.0",
+    "qrcode": "^1.4.4",
+    "svg-to-img": "^2.0.9"
   }
 }
