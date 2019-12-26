@@ -1,4 +1,5 @@
 #!/bin/bash
+# upnpc -d 500 UDP && wg-quick down wg0 && rm -rf /etc/wireguard && rm -rf ~/mobile* && rm -rf /etc/unbound && rm -rf /etc/iptables/rules.v4 && apt remove --purge wireguard unbound qrencode iptables-persistent miniupnpc linux-headers-$(uname -r) -y && apt autoremove -y && iptables -F && sed -ie 's/net.ipv4.ip_forward=1/#net.ipv4.ip_forward=1/; s/net.ipv4.conf.all.forwarding=1/#net.ipv4.conf.all.forwarding=1/; s/net.ipv6.conf.all.forwarding=1/#net.ipv6.conf.all.forwarding=1/' /etc/sysctl.conf && clear
 
 WG_CONFIG="/etc/wireguard/wg0.conf"
 
